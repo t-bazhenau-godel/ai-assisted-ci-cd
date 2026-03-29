@@ -148,8 +148,8 @@ jobs:
         id: yarn-audit
         run: |
           yarn audit --level high --json > audit-report.json 2>&1 || true
-          HIGH=$(grep -c '"type":"auditAdvisory"' audit-report.json || echo 0)
-          CRITICAL=$(grep -c '"severity":"critical"' audit-report.json || echo 0)
+          HIGH=$(grep -c '"type":"auditAdvisory"' audit-report.json 2>/dev/null | tr -d '\n' || echo 0)
+          CRITICAL=$(grep -c '"severity":"critical"' audit-report.json 2>/dev/null | tr -d '\n' || echo 0)
           echo "high=$HIGH" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
           {
