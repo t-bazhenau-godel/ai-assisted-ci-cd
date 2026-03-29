@@ -17,6 +17,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy-pages.outputs.page_url }}
+
     env:
       CI: true
 
@@ -83,3 +92,80 @@ jobs:
               }]
             }' \
             "${{ secrets.TEAMS_WEBHOOK_URL }}"
+
+      # Fetch existing history.json from gh-pages and append a new record
+      - name: Prepare history.json
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          ENTRY=$(jq -n \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg ref "${{ github.ref }}" \
+            --arg conclusion "${{ job.status }}" \
+            '{timestamp: $ts, run_url: $run_url, sha: $sha, ref: $ref, conclusion: $conclusion}')
+
+          # Try to fetch history.json from the gh-pages branch
+          git fetch origin gh-pages 2>/dev/null || true
+          if git show origin/gh-pages:history.json > /tmp/prev_history.json 2>/dev/null; then
+            jq ". + [$ENTRY]" /tmp/prev_history.json > playwright-report/history.json
+          else
+            echo "[$ENTRY]" | jq '.' > playwright-report/history.json
+          fi
+
+      # Upload the report directory as a Pages artifact
+      - name: Upload Pages artifact
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: playwright-report/
+
+      # Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deploy-pages
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/deploy-pages@v4
+
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    continue-on-error: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable --immutable-cache --check-cache
+
+      - name: Run yarn audit
+        id: yarn-audit
+        run: |
+          yarn audit --level high --json > audit-report.json 2>&1 || true
+          HIGH=$(grep -c '"type":"auditAdvisory"' audit-report.json || echo 0)
+          CRITICAL=$(grep -c '"severity":"critical"' audit-report.json || echo 0)
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          {
+            echo "## Dependency Vulnerability Scan"
+            echo ""
+            if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
+              echo "**Result: FAILED**"
+              echo ""
+              echo "| Severity | Count |"
+              echo "|----------|-------|"
+              echo "| High     | $HIGH |"
+              echo "| Critical | $CRITICAL |"
+            else
+              echo "**Result: PASSED** — No high or critical vulnerabilities found."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+          if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
+            exit 1
+          fi
