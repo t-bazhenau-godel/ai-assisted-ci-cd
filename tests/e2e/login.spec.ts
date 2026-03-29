@@ -22,6 +22,7 @@ test.describe('Login', () => {
     logger.info('Login page loaded and ready for test');
   });
 
+  // Test case: Successful login with valid credentials - added to check PR Actions 
   test('should successfully login with valid credentials', async ({ page }) => {
     // Arrange
     const username = Users.STANDARD_USER;
